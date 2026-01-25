@@ -1,11 +1,11 @@
-# automic-api.sh
+## automic-api.sh
 
 A robust Bash-based abstraction layer for the Automic REST API, designed to be consumed as a command by higher-level shell scripts.
 It provides structured wrappers around selected Automic REST endpoints with consistent error handling, logging, validation, and machine-readable output.
 
 ---
 
-## Features
+### Features
 
 - Command-style interface for Automic REST API calls
 - One wrapper function per API endpoint
@@ -18,7 +18,7 @@ It provides structured wrappers around selected Automic REST endpoints with cons
 
 ---
 
-## Supported API Functions
+### Supported API Functions
 
 - ping => Connectivity check
 - system/health => Automic system health status
@@ -28,20 +28,19 @@ It provides structured wrappers around selected Automic REST endpoints with cons
 
 ---
 
-## Usage
+### Usage
 
 List supported functions;
 
-./automic-api.sh --help
+`./automic-api.sh --help`
 
 Detailed help for a specific function:
 
-
-/automic-api.sh --help execute_object
+`/automic-api.sh --help execute_object`
 
 ---
 
-## Requirements
+### Requirements
 
 - Bash 4.3 or newer
 - Linux
@@ -50,14 +49,14 @@ Required tools: curl, jq, mktemp, base64, tr, sleep, date, find
 
 ---
 
-## Configuration
+### Configuration
 
 Configuration file: automic-api.conf
 Must be located in the same directory as the script.
 
 ---
 
-## License
+### License
 
 MIT License
 © 2026 René Kappel
