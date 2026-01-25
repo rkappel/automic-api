@@ -20,11 +20,11 @@ It provides structured wrappers around selected Automic REST endpoints with cons
 
 ## Supported API Functions
 
-ping               Connectivity check
-system/health     Automic system health status
-execute_object   Execute an AE object
-get_execution    Query execution / process monitoring
-get_object      Validate object existence
+- ping              Connectivity check
+- system/health     Automic system health status
+- execute_object    Execute an AE object
+- get_execution     Query execution / process monitoring
+- get_object        Validate object existence
 
 ---
 
