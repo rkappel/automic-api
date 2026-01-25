@@ -1,0 +1,51 @@
+{
+  "_cli_map": {
+    "AE_ENV": "-e <environment>",
+    "AE_CLIENT": "-c <client>",
+    "AE_OBJECT_NAME": "-o <object>",
+    "AE_PARAMETER_STRING": "-p KEY=VAL[,KEY=VAL]",
+    "AE_EXEC_TIMEOUT": "-t <seconds>",
+    "AE_EXEC_NOWAIT": "--nowait",
+    "AE_IGNORE_FINAL_STATUS": "--ignore-jobstatus",
+    "AE_FILTER_STRING": "--filter <expr>"
+  },
+
+  "ping": {
+    "help": "Check API availability",
+    "required": [],
+    "optional": []
+  },
+
+  "get_system_health": {
+    "help": "Return Automation Engine system health",
+    "required": [],
+    "optional": []
+  },
+
+  "get_object": {
+    "help": "Fetch an AE object definition",
+    "required": ["AE_CLIENT", "AE_OBJECT_NAME"],
+    "optional": ["AE_FILTER_STRING"]
+  },
+
+  "execute_object": {
+    "help": "Execute an AE object and optionally wait for completion",
+    "required": ["AE_CLIENT", "AE_OBJECT_NAME"],
+    "optional": [
+      "AE_PARAMETER_STRING",
+      "AE_EXEC_TIMEOUT",
+      "AE_EXEC_NOWAIT",
+      "AE_IGNORE_FINAL_STATUS"
+    ]
+  },
+
+  "get_execution": {
+    "help": "retrieves information about an execution by its run_id",
+    "required": ["AE_CLIENT", "AE_OBJECT_NAME"],
+    "optional": [
+      "AE_PARAMETER_STRING",
+      "AE_EXEC_TIMEOUT",
+      "AE_EXEC_NOWAIT"
+    ]
+  }
+}
