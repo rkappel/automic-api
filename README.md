@@ -24,7 +24,7 @@ It provides structured wrappers around selected Automic REST endpoints with cons
 - system/health => Automic system health status
 - execute_object => Execute an AE object
 - get_execution => Query execution / process monitoring
-- get_object => Validate object existence
+- get_object => Get object contents / validate object existence
 
 ---
 
@@ -66,7 +66,7 @@ Must be located in the same directory as the script.
 - JQ_VERSION
 - LOG_KEEP_DAYS   # read but never enforced#  
 
-### Fix the output of 'execute_object'
+### Fix the output of 'execute_object' :white_check_mark:
 
 ### Add more functions
 
