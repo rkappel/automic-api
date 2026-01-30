@@ -215,6 +215,7 @@ validate_function_inventory() {
 
 execute_request() {
   local fn="ae_${AE_API_FUNCTION}"
+  local log_info
 
   if ! function_exists "$fn"; then
     echo "ERROR: Unsupported API function '$AE_API_FUNCTION'" >&2
@@ -223,7 +224,8 @@ execute_request() {
     exit 60
   fi
 
-  log "dispatcher" "Executing function: $fn"
+  log_info="$fn in environent [${AE_ENV}] ${AE_CLIENT:+with parameters: -c $AE_CLIENT}${AE_OBJECT_NAME:+, -o $AE_OBJECT_NAME}${AE_PARAMETER_STRING:+, -p $AE_PARAMETER_STRING}"
+  log "dispatcher" "Executing function: $log_info"
   "$fn"
 }
 
@@ -499,7 +501,7 @@ load_config_file() {
   }
 
   while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line%%[#;]*}"
+    #line="${line%%[#;]*}"
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
@@ -517,7 +519,12 @@ load_config_file() {
       var="CFG_${section}_${key}"
       var="${var//[^a-zA-Z0-9_]/_}"
       printf -v "$var" '%s' "$value"
-      debug "config" "${var} = ${!var}"
+      if [[ "${var}" == *_pass ]]; then 
+        value='<MASKED>'
+      else 
+        value="${!var}"
+      fi
+      debug "config" "${var} = ${value}"
     fi
   done < "$CONFIG_FILE"
 }
@@ -539,7 +546,7 @@ build_final_config() {
   var="CFG_${AE_ENV}_user"; API_USERNAME="${!var:-}"
   var="CFG_${AE_ENV}_pass"; API_PASSWORD="${!var:-}"
 
-  [[ -n "$API_BASE_URL" ]] || { log "ERROR" "config" "Base URL missing"; exit 20; }
+  [[ -n "$API_BASE_URL" ]] || { log "config" "Base URL missing" "ERROR"; exit 20; }
 
   debug "config" "AE_CLIENT: ${AE_CLIENT}"
   debug "config" "AE_OBJECT_NAME: ${AE_OBJECT_NAME}"
@@ -578,7 +585,7 @@ show_config() {
 rest_api() (
 
   declare -n _req="$1"
-  local tmp_body tmp_headers url attempt http_status
+  local tmp_body tmp_headers url attempt http_status dbg_cmd
   declare -a req_headers
 
   tmp_body="$(mktemp)"
@@ -611,7 +618,16 @@ rest_api() (
   fi
   REST_CMD+=("$url")
 
-  debug "command" "${REST_CMD[*]}"
+  
+
+  for arg in "${REST_CMD[@]}"; do
+      dbg_cmd+=$(printf ' %q' "$arg")
+  done
+
+  debug "command" "$dbg_cmd"
+
+
+  #debug "command" "${REST_CMD[*]}"
 
   attempt=0
   while true; do
@@ -716,8 +732,7 @@ build_request_headers() {
   esac
 
   debug "request" "headers: ${#_req_headers[@]}"
-  debug "request" "$(printf '%s\n' "${_req_headers[@]}" )
-  #| mask_secrets)"
+  debug "request" "$(printf '%s\n' "${_req_headers[@]}" | mask_secrets)"
 }
 
 
