@@ -81,7 +81,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/automic-api.conf"
 
-DEBUG=false
+DEBUG=true
 
 AE_API_FUNCTION=""
 AE_ENV=""
@@ -124,7 +124,17 @@ declare -A API_REQUIRED API_OPTIONAL
 main() {
   #echo "rotating logs"
   detect_platform
+
+  #echo "loading config"
+  load_config_file
+
   init_logging
+  
+  #echo "parsing arguments"
+  parse_arguments "$@"
+  
+  #echo "building final url"
+  build_final_config # overwrite values from config_file with those provided as cli parameters
 
   log "main" "===== New run starts here ====="
   #echo "checking dependencies"
@@ -133,17 +143,10 @@ main() {
   load_functions
   validate_function_inventory
   
-  #echo "parsing arguments"
-  parse_arguments "$@"
+
 
   #echo "validating arguments"
   validate_arguments
-
-  #echo "loading config"
-  load_config_file
-
-  #echo "building final url"
-  build_final_config # overwrite values from config_file with those provided as cli parameters
 
   validate_function_inputs
 
@@ -353,10 +356,71 @@ mask_secrets() {
   sed -E 's/(Authorization: ).*/\1<MASKED>/'
 }
 
+resolve_path() {
+  local input="$1"
+  local path part
+  local -a stack=()
+
+  # leerer Input ist Fehler
+  [[ -n "$input" ]] || return 1
+
+  # relativ → absolut
+  if [[ "$input" = /* ]]; then
+    path="$input"
+  else
+    path="${SCRIPT_DIR%/}/$input"
+  fi
+
+  #######################################
+  # 1. GNU realpath (beste Variante)
+  #######################################
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "$path" 2>/dev/null && return
+  fi
+
+  #######################################
+  # 2. readlink (Linux fallback)
+  #######################################
+  if command -v readlink >/dev/null 2>&1; then
+    readlink -f -- "$path" 2>/dev/null && return
+  fi
+
+  #######################################
+  # 3. Pure Bash fallback (syntaktisch)
+  #######################################
+  IFS='/' read -ra parts <<< "$path"
+
+  for part in "${parts[@]}"; do
+    case "$part" in
+      ''|'.')
+        continue
+        ;;
+      '..')
+        (( ${#stack[@]} > 0 )) && unset 'stack[-1]'
+        ;;
+      *)
+        stack+=("$part")
+        ;;
+    esac
+  done
+
+  printf '/%s\n' "$(IFS=/; echo "${stack[*]}")"
+}
 
 init_logging() {
   local dir today last_change_date
 
+  LOG_FILE="${CFG_common_log_file:-$LOG_FILE}"
+   
+  LOG_FILE=$(resolve_path "$LOG_FILE")
+	
+  LOG_KEEP_DAYS="${CFG_common_log_keep_days:-$LOG_KEEP_DAYS}"
+    
+  if [[ ! "$LOG_KEEP_DAYS" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: LOG_KEEP_DAYS must be a non-negative integer (got: $LOG_KEEP_DAYS)" >&2
+    exit 20
+  fi
+  
   dir="$(dirname "$LOG_FILE")"
   today="$(date +%Y%m%d)"
 
@@ -383,6 +447,15 @@ init_logging() {
       }
     fi
   fi
+  
+  if (( LOG_KEEP_DAYS > 0 )); then
+    find "$dir" -maxdepth 1 -type f \
+      -name "$(basename "$LOG_FILE").[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]" \
+      -mtime +"$LOG_KEEP_DAYS" -exec rm -f {} \; 2>/dev/null || {
+        echo "ERROR: Failed to enforce log retention" >&2
+        exit 20
+      }
+  fi
 
   : >>"$LOG_FILE" 2>/dev/null || {
     echo "ERROR: Cannot write log file: $LOG_FILE" >&2
@@ -394,6 +467,9 @@ init_logging() {
     "$(timestamp)" "$SCRIPT_VERSION" "$BASH_VERSION" "$(uname -srm)" \
     >>"$LOG_FILE"
   fi
+
+  debug "config" "log_file = ${LOG_FILE}"
+  debug "config" "log_keep_days = ${LOG_KEEP_DAYS}"
 
 }
 
@@ -451,28 +527,140 @@ check_tools() {
 # Argument handling
 #######################################
 parse_arguments() {
+  if [[ $# -eq 0 ]]; then
+    usage 2
+    exit 10
+  fi
+  
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -f)                   AE_API_FUNCTION="$2"; shift 2 ;;
-      -e)                   AE_ENV="$2"; shift 2 ;;
-      -c)                   AE_CLIENT="$2"; shift 2 ;;
-      -o)                   AE_OBJECT_NAME="$2"; shift 2 ;;
-      -p)                   AE_PARAMETER_STRING="$2"; shift 2 ;;
-      -t)                   AE_EXEC_TIMEOUT="$2"; shift 2 ;;
-      --filter)             AE_FILTER_STRING="$2"; shift 2 ;;
-      -d|--debug)           DEBUG=true; shift ;;
-      -h|--help)            if [[ -n "${2:-}" && "$2" != -* ]]; then
-                              print_function_help "$2"
-                            else
-                              print_functions_overview
-                            fi
-                            exit 0
-                            ;;
-      --show-config)        show_config; exit 0; shift ;;
-      --nowait)             AE_EXEC_NOWAIT=true; shift ;;
-      --output)             API_OUTPUT="$2"; shift 2 ;;
-      --ignore-jobstatus)   AE_IGNORE_FINAL_STATUS=true; shift 1;;
-      *)                    echo "Unknown option $1" >&2; fail_usage ;;
+      -f)
+        [[ $# -ge 2 && "$2" != -* ]] || {
+          echo "ERROR: Missing argument for -f" >&2
+          exit 10
+        }
+        AE_API_FUNCTION="$2"
+        shift 2
+        ;;
+
+      -e)
+        [[ $# -ge 2 && "$2" != -* ]] || {
+          echo "ERROR: Missing argument for -e" >&2
+          exit 10
+        }
+        AE_ENV="$2"
+        shift 2
+        ;;
+
+      -c)
+        [[ $# -ge 2 && "$2" != -* ]] || {
+          echo "ERROR: Missing argument for -c" >&2
+          exit 10
+        }
+      
+        if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+          echo "ERROR: -c (client) must be numeric (got: $2)" >&2
+          exit 10
+        fi
+      
+        AE_CLIENT="$2"
+        shift 2
+        ;;
+      
+      -o)
+        [[ $# -ge 2 && "$2" != -* ]] || {
+          echo "ERROR: Missing argument for -o" >&2
+          exit 10
+        }
+        AE_OBJECT_NAME="$2"
+        shift 2
+        ;;
+
+      -p)
+        [[ $# -ge 2 && "$2" != -* ]] || {
+          echo "ERROR: Missing argument for -p" >&2
+          exit 10
+        }
+        AE_PARAMETER_STRING="$2"
+        shift 2
+        ;;
+
+      -t)
+        [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || {
+          echo "ERROR: -t requires numeric argument" >&2
+          exit 10
+        }
+        AE_EXEC_TIMEOUT="$2"
+        shift 2
+        ;;
+
+      --filter)
+        [[ $# -ge 2 ]] || {
+          echo "ERROR: Missing argument for --filter" >&2
+          exit 10
+        }
+        AE_FILTER_STRING="$2"
+        shift 2
+        ;;
+
+      --output)
+        [[ $# -ge 2 ]] || {
+          echo "ERROR: Missing argument for --output" >&2
+          exit 10
+        }
+        case "$2" in
+          json|raw) API_OUTPUT="$2" ;;
+          *)
+            echo "ERROR: Invalid value for --output: $2 (allowed: json|raw)" >&2
+            exit 10
+            ;;
+        esac
+        shift 2
+        ;;
+
+      --nowait)
+        AE_EXEC_NOWAIT=true
+        shift
+        ;;
+
+      --ignore-jobstatus)
+        AE_IGNORE_FINAL_STATUS=true
+        shift
+        ;;
+
+      -d|--debug)
+        DEBUG=true
+        shift
+        ;;
+
+      -h|--help)
+        if [[ $# -ge 2 && "$2" != -* ]]; then
+          print_function_help "$2"
+        else
+          print_functions_overview
+        fi
+        exit 0
+        ;;
+
+      --show-config)
+        show_config
+        exit 0
+        ;;
+
+      --)
+        shift
+        break
+        ;;
+
+      -*)
+        echo "ERROR: Unknown option: $1" >&2
+        exit 10
+        ;;
+
+      *)
+        echo "ERROR: Unexpected positional argument: $1" >&2
+        exit 10
+        ;;
     esac
   done
 }
@@ -495,8 +683,8 @@ validate_arguments() {
 load_config_file() {
   local section="" line key value var
   [[ -f "$CONFIG_FILE" ]] || { 
-    echo "ERROR: Config not found";
-    log_error "config" "Config not found"; 
+    echo "ERROR: Config not found" >&2;
+    #log_error "config" "Config not found"; 
     exit 20; 
   }
 
@@ -519,25 +707,29 @@ load_config_file() {
       var="CFG_${section}_${key}"
       var="${var//[^a-zA-Z0-9_]/_}"
       printf -v "$var" '%s' "$value"
-      if [[ "${var}" == *_pass ]]; then 
+	  if [[ "${var}" == *_pass ]]; then 
         value='<MASKED>'
       else 
         value="${!var}"
       fi
-      debug "config" "${var} = ${value}"
     fi
   done < "$CONFIG_FILE"
 }
 
 build_final_config() {
   # Common config
-  API_MAXTIME="${CFG_common_timeout:-}"
-  API_CONNECT_TIMEOUT="${CFG_common_connect_timeout:-}"
+  API_MAXTIME="${CFG_common_timeout:-$API_MAXTIME}"
+  debug "config" "timeout = ${API_MAXTIME}"
+  
+  API_CONNECT_TIMEOUT="${CFG_common_connect_timeout:-$API_CONNECT_TIMEOUT}"
+  debug "config" "connect_timeout = ${API_CONNECT_TIMEOUT}"
+  
   API_RETRY_COUNT="${CFG_common_retry:-$API_RETRY_COUNT}"
-  API_RETRY_DELAY="${CFG_common_retry_delay:-0}"
-  LOG_FILE="${CFG_common_log_file:-$LOG_FILE}"
-  LOG_KEEP_DAYS="${CFG_common_log_keep_days:-$LOG_KEEP_DAYS}"
-
+  debug "config" "retry = ${API_RETRY_COUNT}"
+  
+  API_RETRY_DELAY="${CFG_common_retry_delay:-$API_RETRY_DELAY}"
+  debug "config" "retry_delay = ${API_RETRY_DELAY}"
+   
   # Service config
   var="CFG_${AE_ENV}_url"; API_BASE_URL="${!var:-}"
   var="CFG_${AE_ENV}_auth_method"; API_AUTH_MODE="${!var:-}"
@@ -582,7 +774,7 @@ show_config() {
 #######################################
 # REST API Wrapper 
 #######################################
-rest_api() (
+rest_api() {
 
   declare -n _req="$1"
   local tmp_body tmp_headers url attempt http_status dbg_cmd
@@ -600,7 +792,7 @@ rest_api() (
     -D "$tmp_headers" \
     -w '%{http_code}' \
     --max-time "$API_MAXTIME" \
-    --connect-timeout "$API_CONNECT_TIMEOUT" \
+    --connect-timeout "$API_CONNECT_TIMEOUT" 
     )
 
   # add headers
@@ -696,7 +888,7 @@ rest_api() (
       fi
     fi
   fi
-)
+}
 
 with_silence() {
   local old="$API_SILENT"
@@ -971,7 +1163,7 @@ hlp_get_ae_status_code() {
     echo "ERROR: Status missing" >&2
     exit 50
   }
-  echo $status
+  echo "$status"
 }
 
 hlp_ae_is_generating() {
