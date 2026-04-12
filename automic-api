@@ -73,7 +73,7 @@ if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) ))
   exit 20
 fi
 
-set -euo pipefail
+set -uo pipefail
 
 #######################################
 # Defaults
@@ -81,7 +81,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/automic-api.conf"
 
-DEBUG=true
+DEBUG=false
 
 AE_API_FUNCTION=""
 AE_ENV=""
@@ -116,7 +116,8 @@ FUNCTIONS_JSON=""
 FUNCTIONS_FILE="${SCRIPT_DIR}/automic-api.functions.json"
 
 declare -A API_REQUIRED API_OPTIONAL
-
+declare -a DEBUG_BUFFER=()
+ARG_PARSING_FINALIZED=false
 
 #######################################
 # Main routine
@@ -138,6 +139,10 @@ main() {
 
   log "main" "===== New run starts here ====="
   #echo "checking dependencies"
+
+
+  flush_debug_buffer
+  
   check_tools
 
   load_functions
@@ -232,7 +237,7 @@ execute_request() {
   "$fn"
 }
 
-
+	
 #######################################
 # Usage
 #######################################
@@ -269,32 +274,54 @@ fail_usage() {
 }
 
 print_functions_overview() {
+  local width=0
+  local -a lines
+  local fn desc
 
-  local width
+  # JSON laden (falls nicht schon passiert)
+  if [[ -z "${FUNCTIONS_JSON:-}" && -f "$FUNCTIONS_FILE" ]]; then
+    FUNCTIONS_JSON="$(<"$FUNCTIONS_FILE")"
+  fi
 
-  # Determine max function name width
-  width="$(jq -r '
-    to_entries[]
-    | select(.key != "_cli_map")
-    | .key
-  ' <<<"$FUNCTIONS_JSON" \
-  | awk '{ if (length > max) max = length } END { print max }')"
+  # Validierung
+  if [[ -z "${FUNCTIONS_JSON:-}" ]]; then
+    echo "No functions defined (FUNCTIONS_JSON is empty)" >&2
+    return 1
+  fi
+
+  # Alle Funktionen holen (Name + Beschreibung)
+  if ! mapfile -t lines < <(
+    jq -r '
+      to_entries[]
+      | select(.key != "_cli_map")
+      | [.key, (.value.help // "")]
+      | @tsv
+    ' <<<"$FUNCTIONS_JSON"
+  ); then
+    echo "Failed to parse FUNCTIONS_JSON" >&2
+    return 1
+  fi
+
+  # Keine Funktionen vorhanden
+  if (( ${#lines[@]} == 0 )); then
+    echo "No functions available"
+    return 0
+  fi
+
+  # Maximale Breite berechnen
+  for line in "${lines[@]}"; do
+    IFS=$'\t' read -r fn desc <<< "$line"
+    (( ${#fn} > width )) && width=${#fn}
+  done
 
   # Header
   printf '%s\n\n' "Currently supported functions are:"
   printf "%-${width}s  %s\n" "Function" "Description"
-  printf "%-${width}s  %s\n" \
-    "$(printf '%*s' "$width" '' | tr ' ' '-')" \
-    "-----------"
+  printf "%-${width}s  %s\n" "$(printf '%*s' "$width" '' | tr ' ' '-')" "-----------"
 
-  # Rows
-  jq -r '
-    to_entries[]
-    | select(.key != "_cli_map")
-    | [.key, .value.help]
-    | @tsv
-  ' <<<"$FUNCTIONS_JSON" |
-  while IFS=$'\t' read -r fn desc; do
+  # Ausgabe
+  for line in "${lines[@]}"; do
+    IFS=$'\t' read -r fn desc <<< "$line"
     printf "%-${width}s  %s\n" "$fn" "$desc"
   done
 }
@@ -468,9 +495,12 @@ init_logging() {
     >>"$LOG_FILE"
   fi
 
+  LOGGING_READY=true
+  
   debug "config" "log_file = ${LOG_FILE}"
   debug "config" "log_keep_days = ${LOG_KEEP_DAYS}"
 
+  
 }
 
 log() {
@@ -496,11 +526,30 @@ log_error() {
 }
 
 debug() {
-  if $DEBUG; then 
-    log "$1" "$2" "DEBUG"
+  local msg="$*"
+
+  # solange Argumente noch nicht final geparst → puffern
+  if ! $ARG_PARSING_FINALIZED; then
+    DEBUG_BUFFER+=("$msg")
+    return
   fi
+
+  # danach normales Verhalten
+  [[ "${DEBUG:-false}" == true ]] && log "debug" "$msg" "DEBUG"
 }
 
+flush_debug_buffer() {
+  $ARG_PARSING_FINALIZED && return
+  ARG_PARSING_FINALIZED=true
+
+  if [[ "${DEBUG:-false}" == true ]]; then
+    for msg in "${DEBUG_BUFFER[@]}"; do
+      log "debug" "$msg" "DEBUG"
+    done
+  fi
+
+  unset DEBUG_BUFFER
+}
 
 #######################################
 # External tool checks
@@ -782,7 +831,7 @@ rest_api() {
 
   tmp_body="$(mktemp)"
   tmp_headers="$(mktemp)"
-  trap 'rm -f "${tmp_body:-}" "${tmp_headers:-}"' EXIT
+  trap 'rm -f "${tmp_body:-}" "${tmp_headers:-}"' RETURN
 
   build_request_headers req_headers
 
